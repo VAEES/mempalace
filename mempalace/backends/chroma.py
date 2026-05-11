@@ -54,7 +54,11 @@ def _is_remote_mode() -> bool:
 
 
 def _make_http_client():
-    """Build a chromadb.HttpClient from environment variables."""
+    """Build a chromadb.HttpClient from environment variables.
+
+    Creates the tenant/database on the remote server if they don't exist yet,
+    so a fresh deployment works without manual setup.
+    """
     host = os.environ["CHROMA_HOST"]
     port = int(os.getenv("CHROMA_PORT", "443"))
     ssl = os.getenv("CHROMA_SSL", "true").lower() == "true"
@@ -70,6 +74,28 @@ def _make_http_client():
         settings_kwargs["chroma_client_auth_credentials"] = api_key
 
     settings = chromadb.config.Settings(**settings_kwargs)
+
+    # Bootstrap: ensure the tenant and database exist before connecting.
+    # HttpClient validates both during __init__ and raises NotFoundError if absent.
+    try:
+        admin = chromadb.AdminClient(settings=chromadb.config.Settings(
+            **settings_kwargs,
+            chroma_server_host=host,
+            chroma_server_http_port=str(port),
+            chroma_server_ssl_enabled=ssl,
+        ))
+        try:
+            admin.get_tenant(tenant)
+        except Exception:
+            admin.create_tenant(tenant)
+            logger.info("MemPalace remote: created tenant '%s'", tenant)
+        try:
+            admin.get_database(database, tenant=tenant)
+        except Exception:
+            admin.create_database(database, tenant=tenant)
+            logger.info("MemPalace remote: created database '%s'", database)
+    except Exception:
+        logger.debug("MemPalace remote: admin bootstrap skipped (may already exist)")
 
     client = chromadb.HttpClient(
         host=host,
