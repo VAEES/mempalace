@@ -164,6 +164,95 @@ verbatim drawer per user/assistant message, idempotent and resume-safe.
 
 ---
 
+## Remote ChromaDB / Team Brain
+
+> This section covers a feature added in the [VAEES fork](https://github.com/VAEES/mempalace).
+> It lets your team share a single palace stored on a remote ChromaDB server while
+> keeping the MCP server and the embedding model running **locally** on each machine.
+
+### Architecture
+
+```
+Your machine (stdio, as usual):
+  Cursor → stdio → mempalace-mcp (local pip install)
+                         │
+                         │  CHROMA_HOST / CHROMA_API_KEY
+                         ▼  HTTPS
+                   Remote server:
+                     [Traefik] → chroma.yourcompany.com
+                         ▼
+                     [ChromaDB container + volume]
+```
+
+The embedding model (~300 MB ONNX) still runs locally — vectors are generated on
+your machine and sent to the remote ChromaDB. The knowledge graph (SQLite) also
+stays local.
+
+### Deploying the ChromaDB server (Traefik/Docker)
+
+```bash
+# On the server
+cp infra/.env.example infra/.env
+# Edit infra/.env: set CHROMA_DOMAIN and generate a strong CHROMA_API_KEY
+#   openssl rand -hex 32
+
+docker compose -f infra/docker-compose.production.yml --env-file infra/.env up -d
+```
+
+See [`infra/docker-compose.production.yml`](infra/docker-compose.production.yml) for the full
+configuration. It expects a Traefik instance running on the `proxy` Docker network with a
+`le` (Let's Encrypt) cert resolver.
+
+### Configuring each team member's machine
+
+Add the following to `~/.bashrc`, `~/.zshrc`, or your project's `.env`:
+
+```bash
+# Point mempalace to the remote ChromaDB
+export CHROMA_HOST=chroma.yourcompany.com   # domain configured on the server
+export CHROMA_PORT=443
+export CHROMA_SSL=true
+export CHROMA_API_KEY=<same key as on the server>
+
+# Shared company brain — everyone reads and writes here
+export CHROMA_DATABASE=company-brain
+
+# Or use a personal palace (switch anytime by changing CHROMA_DATABASE):
+# export CHROMA_DATABASE=your-name
+```
+
+When `CHROMA_HOST` is **not** set, mempalace behaves exactly as upstream — fully
+local with a `PersistentClient`. No migration needed for existing palaces.
+
+### Multiple palaces per user
+
+Each value of `CHROMA_DATABASE` is an independent palace on the same server:
+
+| `CHROMA_DATABASE` | Purpose |
+|-------------------|---------|
+| `company-brain`   | Shared memory — decisions, project context, client knowledge |
+| `lucas`           | Lucas's personal palace |
+| `pedro`           | Pedro's personal palace |
+
+Switch between them by changing the env var and restarting the MCP server.
+
+### Local development
+
+To test the remote backend locally without a real server:
+
+```bash
+docker compose -f infra/docker-compose.yaml up -d
+
+export CHROMA_HOST=localhost
+export CHROMA_PORT=8000
+export CHROMA_SSL=false
+export CHROMA_DATABASE=mempalace-dev
+```
+
+See [`infra/.env.example`](infra/.env.example) for the full list of variables.
+
+---
+
 ## Requirements
 
 - Python 3.9+

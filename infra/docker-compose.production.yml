@@ -1,0 +1,54 @@
+version: '3.9'
+
+# ChromaDB remoto para uso compartilhado (cérebro da empresa).
+# Requer Traefik rodando na rede "proxy" com certresolver "le".
+#
+# Deploy:
+#   cp infra/.env.example infra/.env   # e preencha as variáveis
+#   docker compose -f infra/docker-compose.production.yml --env-file infra/.env up -d
+
+services:
+    chroma:
+        image: chromadb/chroma:1.5.4
+        container_name: chroma
+        restart: unless-stopped
+        environment:
+            CHROMA_SERVER_AUTH_CREDENTIALS: "${CHROMA_API_KEY}"
+            CHROMA_SERVER_AUTH_PROVIDER: "chromadb.auth.token_authn.TokenAuthenticationServerProvider"
+            CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER: "chromadb.auth.token_authn.TokenConfigServerAuthCredentialsProvider"
+            TZ: America/Sao_Paulo
+        volumes:
+            - chroma-data:/chroma/chroma
+        labels:
+            - traefik.enable=true
+            - traefik.docker.network=proxy
+            # Router
+            - traefik.http.routers.chroma.rule=Host(`${CHROMA_DOMAIN}`)
+            - traefik.http.routers.chroma.entrypoints=websecure
+            - traefik.http.routers.chroma.tls=true
+            - traefik.http.routers.chroma.tls.certresolver=le
+            # Service
+            - traefik.http.services.chroma.loadbalancer.server.port=8000
+            # CORS (necessário para clientes remotos)
+            - traefik.http.routers.chroma.middlewares=chroma-cors
+            - traefik.http.middlewares.chroma-cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS
+            - traefik.http.middlewares.chroma-cors.headers.accesscontrolallowheaders=Content-Type,Authorization,X-Chroma-Token
+            - traefik.http.middlewares.chroma-cors.headers.accesscontrolalloworiginlist=*
+            - traefik.http.middlewares.chroma-cors.headers.accesscontrolmaxage=100
+        networks:
+            - proxy
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:8000/api/v2/heartbeat']
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 15s
+
+volumes:
+    chroma-data:
+        driver: local
+
+networks:
+    proxy:
+        external: true
+        name: proxy

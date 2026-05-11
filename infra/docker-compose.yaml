@@ -1,0 +1,32 @@
+version: '3.9'
+
+# ChromaDB local para desenvolvimento e testes.
+# Sem auth e sem Traefik — acesso direto via localhost:8000.
+#
+# Uso:
+#   docker compose -f infra/docker-compose.yaml up -d
+#
+# Configure seu ambiente local:
+#   export CHROMA_HOST=localhost
+#   export CHROMA_PORT=8000
+#   export CHROMA_SSL=false
+#   export CHROMA_DATABASE=mempalace-dev
+
+services:
+    chroma:
+        image: chromadb/chroma:1.5.4
+        container_name: chroma-dev
+        restart: unless-stopped
+        environment:
+            TZ: America/Sao_Paulo
+            # Sem auth em ambiente de desenvolvimento
+        ports:
+            - "8000:8000"
+        volumes:
+            - ./chroma-data-dev:/chroma/chroma
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:8000/api/v2/heartbeat']
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s

@@ -27,6 +27,61 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Remote ChromaDB helpers (VAEES fork)
+# ---------------------------------------------------------------------------
+# Set CHROMA_HOST to point to a remote ChromaDB server. When set, the backend
+# uses chromadb.HttpClient instead of PersistentClient — all local filesystem
+# operations (HNSW quarantine, inode checks, makedirs) are skipped.
+#
+# Required env vars (remote mode):
+#   CHROMA_HOST      — hostname of the remote ChromaDB server (e.g. chroma.example.com)
+#
+# Optional env vars:
+#   CHROMA_PORT      — port (default: 443)
+#   CHROMA_SSL       — "true"/"false" (default: "true")
+#   CHROMA_API_KEY   — Bearer token for ChromaDB token auth (default: "")
+#   CHROMA_TENANT    — ChromaDB tenant (default: "default_tenant")
+#   CHROMA_DATABASE  — ChromaDB database / palace namespace (default: "mempalace")
+# ---------------------------------------------------------------------------
+
+_REMOTE_CLIENT_KEY = "__remote__"
+
+
+def _is_remote_mode() -> bool:
+    """Return True when CHROMA_HOST is set, enabling remote ChromaDB mode."""
+    return bool(os.getenv("CHROMA_HOST"))
+
+
+def _make_http_client():
+    """Build a chromadb.HttpClient from environment variables."""
+    host = os.environ["CHROMA_HOST"]
+    port = int(os.getenv("CHROMA_PORT", "443"))
+    ssl = os.getenv("CHROMA_SSL", "true").lower() == "true"
+    api_key = os.getenv("CHROMA_API_KEY", "")
+    tenant = os.getenv("CHROMA_TENANT", "default_tenant")
+    database = os.getenv("CHROMA_DATABASE", "mempalace")
+
+    settings = chromadb.config.Settings(anonymized_telemetry=False)
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    client = chromadb.HttpClient(
+        host=host,
+        port=port,
+        ssl=ssl,
+        tenant=tenant,
+        database=database,
+        settings=settings,
+        headers=headers if headers else None,
+    )
+    logger.info(
+        "MemPalace remote mode: connected to %s:%s (ssl=%s, database=%s)",
+        host, port, ssl, database,
+    )
+    return client
+
 
 _REQUIRED_OPERATORS = frozenset({"$eq", "$ne", "$in", "$nin", "$and", "$or", "$contains"})
 _OPTIONAL_OPERATORS = frozenset({"$gt", "$gte", "$lt", "$lte"})
@@ -1140,11 +1195,15 @@ class ChromaBackend(BaseBackend):
             return (0, 0.0)
 
     def _client(self, palace_path: str):
-        """Return a cached ``PersistentClient``, rebuilding on inode/mtime change.
+        """Return a cached client, using HttpClient in remote mode or
+        PersistentClient locally (rebuilding on inode/mtime change).
 
-        Handles the palace-rebuild case (repair/nuke/purge) by invalidating the
-        cache when ``chroma.sqlite3`` changes on disk. Mirrors the semantics of
-        ``mcp_server._get_client`` (merged via #757):
+        In remote mode (CHROMA_HOST set): returns a single shared HttpClient,
+        bypassing all local filesystem operations.
+
+        In local mode: handles the palace-rebuild case (repair/nuke/purge) by
+        invalidating the cache when ``chroma.sqlite3`` changes on disk. Mirrors
+        the semantics of ``mcp_server._get_client`` (merged via #757):
 
         * DB file missing while we hold a cached client → drop the cache so we
           do not serve stale data after a rebuild that has not yet re-created
@@ -1160,6 +1219,13 @@ class ChromaBackend(BaseBackend):
             from .base import BackendClosedError  # late import avoids cycles at module load
 
             raise BackendClosedError("ChromaBackend has been closed")
+
+        if _is_remote_mode():
+            cached = self._clients.get(_REMOTE_CLIENT_KEY)
+            if cached is None:
+                cached = _make_http_client()
+                self._clients[_REMOTE_CLIENT_KEY] = cached
+            return cached
 
         cached = self._clients.get(palace_path)
         cached_inode, cached_mtime = self._freshness.get(palace_path, (0, 0.0))
@@ -1259,16 +1325,17 @@ class ChromaBackend(BaseBackend):
 
     @staticmethod
     def make_client(palace_path: str):
-        """Create a fresh ``PersistentClient`` (fixes BLOB seq_ids first).
+        """Create a fresh client — HttpClient in remote mode, PersistentClient locally.
 
         Deprecated-ish: exposed for legacy long-lived callers that manage their
         own client cache. New code should obtain a collection through
         :meth:`get_collection` which manages caching internally.
 
-        Quarantines HNSW segments **once per palace per process**. See
-        :attr:`_quarantined_paths` for the rationale (cold-start protection
-        vs. runtime thrash on steady-write daemons).
+        Quarantines HNSW segments **once per palace per process** (local mode only).
+        See :attr:`_quarantined_paths` for the rationale.
         """
+        if _is_remote_mode():
+            return _make_http_client()
         ChromaBackend._prepare_palace_for_open(palace_path)
         return chromadb.PersistentClient(path=palace_path)
 
@@ -1298,20 +1365,27 @@ class ChromaBackend(BaseBackend):
         palace_ref, collection_name, create, options = _normalize_get_collection_args(args, kwargs)
 
         palace_path = palace_ref.local_path
-        if palace_path is None:
-            raise PalaceNotFoundError("ChromaBackend requires PalaceRef.local_path")
 
-        if not create and not os.path.isdir(palace_path):
-            raise PalaceNotFoundError(palace_path)
+        if _is_remote_mode():
+            # Remote mode: no local filesystem — the palace lives on the remote
+            # ChromaDB server identified by CHROMA_DATABASE. palace_path is kept
+            # as metadata on ChromaCollection but is never used for disk I/O.
+            client = self._client(palace_path)
+        else:
+            if palace_path is None:
+                raise PalaceNotFoundError("ChromaBackend requires PalaceRef.local_path")
 
-        if create:
-            os.makedirs(palace_path, exist_ok=True)
-            try:
-                os.chmod(palace_path, 0o700)
-            except (OSError, NotImplementedError):
-                pass
+            if not create and not os.path.isdir(palace_path):
+                raise PalaceNotFoundError(palace_path)
 
-        client = self._client(palace_path)
+            if create:
+                os.makedirs(palace_path, exist_ok=True)
+                try:
+                    os.chmod(palace_path, 0o700)
+                except (OSError, NotImplementedError):
+                    pass
+
+            client = self._client(palace_path)
         hnsw_space = "cosine"
         if options and isinstance(options, dict):
             hnsw_space = options.get("hnsw_space", hnsw_space)
@@ -1340,11 +1414,16 @@ class ChromaBackend(BaseBackend):
     def close_palace(self, palace) -> None:
         """Drop cached handles for ``palace`` and release its SQLite file lock.
 
-        Accepts ``PalaceRef`` or legacy path str. chromadb's rust-side file
-        lock is held until ``PersistentClient.close()`` is called, so plain
-        dict eviction would leave the palace path unreopenable and
-        unremovable in the same process.
+        Accepts ``PalaceRef`` or legacy path str. In remote mode the shared
+        HttpClient is intentionally not closed here (it is shared across all
+        palaces); it is only closed on backend.close().
+
+        In local mode: chromadb's rust-side file lock is held until
+        ``PersistentClient.close()`` is called, so plain dict eviction would
+        leave the palace path unreopenable and unremovable in the same process.
         """
+        if _is_remote_mode():
+            return
         path = palace.local_path if isinstance(palace, PalaceRef) else palace
         if path is None:
             return
@@ -1361,10 +1440,19 @@ class ChromaBackend(BaseBackend):
     def health(self, palace: Optional[PalaceRef] = None) -> HealthStatus:
         if self._closed:
             return HealthStatus.unhealthy("backend closed")
+        if _is_remote_mode():
+            try:
+                client = self._client(None)
+                client.heartbeat()
+                return HealthStatus.healthy()
+            except Exception as exc:
+                return HealthStatus.unhealthy(f"remote ChromaDB unreachable: {exc}")
         return HealthStatus.healthy()
 
     @classmethod
     def detect(cls, path: str) -> bool:
+        if _is_remote_mode():
+            return False
         return os.path.isfile(os.path.join(path, "chroma.sqlite3"))
 
     # ------------------------------------------------------------------
