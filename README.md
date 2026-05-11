@@ -47,6 +47,14 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 uv tool install git+https://github.com/VAEES/mempalace.git@vaees/remote-chroma
 ```
 
+### Inicializar o palace local
+
+```bash
+mempalace init ~/.mempalace/palace
+```
+
+> Isso cria a estrutura local necessária. Como os dados ficam no ChromaDB remoto, este diretório local é apenas um ponto de montagem — não é onde as memórias são salvas de fato.
+
 ### Configurar MCP server
 
 Adicione ao seu arquivo de configuração MCP (ex: `.cursor/mcp.json` ou `claude_desktop_config.json`):
