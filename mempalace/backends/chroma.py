@@ -77,25 +77,36 @@ def _make_http_client():
 
     # Bootstrap: ensure the tenant and database exist before connecting.
     # HttpClient validates both during __init__ and raises NotFoundError if absent.
+    # We use the REST API directly (via requests) because AdminClient has auth
+    # inconsistencies with HttpClient in chromadb 1.5.x.
     try:
-        admin = chromadb.AdminClient(settings=chromadb.config.Settings(
-            **settings_kwargs,
-            chroma_server_host=host,
-            chroma_server_http_port=str(port),
-            chroma_server_ssl_enabled=ssl,
-        ))
-        try:
-            admin.get_tenant(tenant)
-        except Exception:
-            admin.create_tenant(tenant)
+        import requests as _requests
+
+        scheme = "https" if ssl else "http"
+        base = f"{scheme}://{host}:{port}/api/v2"
+        auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+        # Ensure tenant exists
+        r = _requests.get(f"{base}/tenants/{tenant}", headers=auth_headers, timeout=10)
+        if r.status_code == 404:
+            _requests.post(f"{base}/tenants", json={"name": tenant},
+                           headers=auth_headers, timeout=10)
             logger.info("MemPalace remote: created tenant '%s'", tenant)
-        try:
-            admin.get_database(database, tenant=tenant)
-        except Exception:
-            admin.create_database(database, tenant=tenant)
+
+        # Ensure database exists
+        r = _requests.get(
+            f"{base}/tenants/{tenant}/databases/{database}",
+            headers=auth_headers, timeout=10,
+        )
+        if r.status_code == 404:
+            _requests.post(
+                f"{base}/tenants/{tenant}/databases",
+                json={"name": database},
+                headers=auth_headers, timeout=10,
+            )
             logger.info("MemPalace remote: created database '%s'", database)
     except Exception:
-        logger.debug("MemPalace remote: admin bootstrap skipped (may already exist)")
+        logger.debug("MemPalace remote: bootstrap via REST failed", exc_info=True)
 
     client = chromadb.HttpClient(
         host=host,
