@@ -49,7 +49,7 @@ Adicione ao seu arquivo de configuração MCP (ex: `.cursor/mcp.json` ou `claude
         "CHROMA_PORT": "443",
         "CHROMA_SSL": "true",
         "CHROMA_API_KEY": "sua-api-key",
-        "CHROMA_DATABASE": "company-brain",
+        "CHROMA_DATABASE": "numends",
         "CHROMA_TENANT": "default_tenant"
       }
     }
@@ -57,7 +57,7 @@ Adicione ao seu arquivo de configuração MCP (ex: `.cursor/mcp.json` ou `claude
 }
 ```
 
-> **`CHROMA_DATABASE`** define qual palace você acessa. Use `company-brain` para a memória compartilhada da empresa ou o seu nome para uma memória pessoal.
+> **`CHROMA_DATABASE`** define qual palace você acessa. Use `numends` para a memória compartilhada da empresa ou o seu nome para uma memória pessoal.
 
 ---
 
