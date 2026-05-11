@@ -68,6 +68,7 @@ from .backends.chroma import (  # noqa: E402
     ChromaCollection,
     _HNSW_BLOAT_GUARD,
     _pin_hnsw_threads,
+    _is_remote_mode,
     hnsw_capacity_status,
 )
 from .query_sanitizer import sanitize_query  # noqa: E402
@@ -590,22 +591,30 @@ def _tool_status_via_sqlite() -> dict:
 
 
 def tool_status():
-    # Run the safe sqlite/pickle probe before we touch chromadb. In the
-    # #1222 failure mode, opening the persistent client to call .count()
-    # can segfault — short-circuit to a pure-sqlite path when divergence
-    # is detected so status stays reachable.
-    db_exists = os.path.isfile(os.path.join(_config.palace_path, "chroma.sqlite3"))
-    _refresh_vector_disabled_flag()
+    # Remote mode: no local sqlite file — skip the capacity probe and use
+    # create=True so the collection is bootstrapped on the remote server if
+    # it doesn't exist yet.
+    if _is_remote_mode():
+        col = _get_collection(create=True)
+        if not col:
+            return _no_palace()
+    else:
+        # Run the safe sqlite/pickle probe before we touch chromadb. In the
+        # #1222 failure mode, opening the persistent client to call .count()
+        # can segfault — short-circuit to a pure-sqlite path when divergence
+        # is detected so status stays reachable.
+        db_exists = os.path.isfile(os.path.join(_config.palace_path, "chroma.sqlite3"))
+        _refresh_vector_disabled_flag()
 
-    if _vector_disabled:
-        return _tool_status_via_sqlite()
+        if _vector_disabled:
+            return _tool_status_via_sqlite()
 
-    # Use create=True only when a palace DB already exists on disk -- this
-    # bootstraps the ChromaDB collection on a valid-but-empty palace without
-    # accidentally creating a palace in a non-existent directory (#830).
-    col = _get_collection(create=db_exists)
-    if not col:
-        return _no_palace()
+        # Use create=True only when a palace DB already exists on disk -- this
+        # bootstraps the ChromaDB collection on a valid-but-empty palace without
+        # accidentally creating a palace in a non-existent directory (#830).
+        col = _get_collection(create=db_exists)
+        if not col:
+            return _no_palace()
     count = col.count()
     wings = {}
     rooms = {}
