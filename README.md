@@ -31,11 +31,21 @@ Local-first AI memory. Verbatim storage, pluggable backend, 96.6% R@5 raw on Lon
 
 ### Instalação
 
+**macOS / Linux:**
 ```bash
+# Instalar uv (se ainda não tiver)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 uv tool install git+https://github.com/VAEES/mempalace.git@vaees/remote-chroma
 ```
 
-> Se não tiver `uv` instalado: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+**Windows (PowerShell):**
+```powershell
+# Instalar uv (se ainda não tiver)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+uv tool install git+https://github.com/VAEES/mempalace.git@vaees/remote-chroma
+```
 
 ### Configurar MCP server
 
