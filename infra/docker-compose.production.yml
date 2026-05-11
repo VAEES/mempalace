@@ -9,7 +9,12 @@ version: '3.9'
 
 services:
     chroma:
-        image: chromadb/chroma:1.5.4
+        build:
+            context: .
+            dockerfile_inline: |
+                FROM chromadb/chroma:1.5.4
+                RUN apt-get update && apt-get install -y --no-install-recommends wget \
+                    && rm -rf /var/lib/apt/lists/*
         container_name: chroma
         restart: unless-stopped
         environment:
@@ -38,7 +43,11 @@ services:
         networks:
             - proxy
         healthcheck:
-            disable: true
+            test: ['CMD-SHELL', 'wget -qO- http://localhost:8000/api/v2/heartbeat || exit 1']
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 15s
 
 volumes:
     chroma-data:
