@@ -27,6 +27,40 @@ Local-first AI memory. Verbatim storage, pluggable backend, 96.6% R@5 raw on Lon
 
 ---
 
+## Como usar
+
+### Instalação
+
+```bash
+pip install git+https://github.com/VAEES/mempalace.git@vaees/remote-chroma
+```
+
+### Configurar MCP server
+
+Adicione ao seu arquivo de configuração MCP (ex: `.cursor/mcp.json` ou `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mempalace": {
+      "command": "mempalace-mcp",
+      "env": {
+        "CHROMA_HOST": "chroma.mcps.b2rise.com",
+        "CHROMA_PORT": "443",
+        "CHROMA_SSL": "true",
+        "CHROMA_API_KEY": "sua-api-key",
+        "CHROMA_DATABASE": "company-brain",
+        "CHROMA_TENANT": "default_tenant"
+      }
+    }
+  }
+}
+```
+
+> **`CHROMA_DATABASE`** define qual palace você acessa. Use `company-brain` para a memória compartilhada da empresa ou o seu nome para uma memória pessoal.
+
+---
+
 ## What it is
 
 MemPalace stores your conversation history as verbatim text and retrieves
