@@ -62,10 +62,14 @@ def _make_http_client():
     tenant = os.getenv("CHROMA_TENANT", "default_tenant")
     database = os.getenv("CHROMA_DATABASE", "mempalace")
 
-    settings = chromadb.config.Settings(anonymized_telemetry=False)
-    headers = {}
+    settings_kwargs = {"anonymized_telemetry": False}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        settings_kwargs["chroma_client_auth_provider"] = (
+            "chromadb.auth.token_authn.TokenAuthClientProvider"
+        )
+        settings_kwargs["chroma_client_auth_credentials"] = api_key
+
+    settings = chromadb.config.Settings(**settings_kwargs)
 
     client = chromadb.HttpClient(
         host=host,
@@ -74,7 +78,6 @@ def _make_http_client():
         tenant=tenant,
         database=database,
         settings=settings,
-        headers=headers if headers else None,
     )
     logger.info(
         "MemPalace remote mode: connected to %s:%s (ssl=%s, database=%s)",
